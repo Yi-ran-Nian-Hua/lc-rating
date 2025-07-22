@@ -47,11 +47,13 @@ type ProblemCategory = {
   original_src?: string;
   sort?: Number;
   isLeaf?: boolean;
-  solution?: string;
-  score?: Number;
-  child?: ProblemCategory[];
+  solution?: string | null;
+  score?: Number | null;
+  leafChild?: ProblemCategory[];
+  nonLeafChild?: ProblemCategory[];
   isPremium?: boolean;
-};
+  last_update?: string;
+}
 
 interface ProblemCategoryProps {
   title?: string;
@@ -59,33 +61,9 @@ interface ProblemCategoryProps {
   data?: ProblemCategory[];
   className?: string;
   level?: number;
-  rating?: boolean;
-  en?: boolean;
-}
-
-export const hashCode = function (s: string) {
-  var hash = 0,
-    i,
-    chr;
-  if (s.length === 0) return hash;
-  for (i = 0; i < s.length; i++) {
-    chr = s.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-};
-
-function count(data: ProblemCategory[]) {
-  let tot = 0;
-  for (let i = 0; i < data.length; i++) {
-    if (!data[i].isLeaf) {
-      tot += count(data[i].child);
-    } else {
-      tot += data[i].child ? data[i].child.length : 0;
-    }
-  }
-  return tot;
+  showEn?: boolean;
+  showRating?: boolean;
+  showPremium?: boolean;
 }
 
 function ProblemCategory({
@@ -94,9 +72,13 @@ function ProblemCategory({
   data,
   className = "",
   level = 0,
-  rating,
-  en,
+  showEn,
+  showRating,
+  showPremium,
 }: ProblemCategoryProps) {
+  const { optionKeys, getOption } = useProgressOptions();
+  const { allProgress, updateProgress, removeProgress } = useQuestProgress();
+
   return (
     <div className={`pb-container level-${level}` + className}>
       {
@@ -111,26 +93,37 @@ function ProblemCategory({
           <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex, rehypeRaw]}>{summary}</ReactMarkdown>
         </span>
       )}
-      <div className={`level-${level + 1}`}>
+      <div className={`level-${level}`}>
         {data &&
           data.map((item) => {
+            let summary = item.leafChild.length == 0 ? item.summary : "";
+            let title = item.leafChild.length == 0 ? item.title : "";
             return (
-              <div className={`pb-container level-${level + 2}`}>
-                {item.isLeaf ? (
-                  <ProblemCategoryList rating={rating} en={en} data={item} className={`leaf`} />
-                ) : (
-                  item.child &&
-                  item.child?.map((item) => (
-                    <ProblemCategory
-                      rating={rating}
-                      en={en}
-                      level={level + 3}
-                      title={item.title}
-                      data={item.child}
-                      summary={item.summary}
-                    />
-                  ))
-                )}
+              <div key={hashCode(item.title || "") + "head"}>
+                {item.leafChild.length > 0 ? (
+                  <ProblemCategoryList
+                  optionKeys={optionKeys}
+                  getOption={getOption}
+                  allProgress={allProgress}
+                  updateProgress={updateProgress}
+                  removeProgress={removeProgress}
+                  showEn={showEn}
+                  showRating={showRating}
+                  showPremium={showPremium}
+                  data={item}
+                  key={hashCode(item.title || "") + "leaf"}
+                  />
+                ) : <></>}
+                <ProblemCategory
+                  showEn={showEn}
+                  showRating={showRating}
+                  showPremium={showPremium}
+                  level={level + 1}
+                  title={title}
+                  data={item.nonLeafChild}
+                  summary={summary}
+                  key={hashCode(item.title || "") + "nonLeaf"}
+                />
               </div>
             );
           })}

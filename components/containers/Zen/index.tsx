@@ -1,5 +1,22 @@
 "use client";
-import React, { useCallback, useMemo, useState, useTransition } from "react";
+
+// Custom components
+import { FilterIcon, ShareIcon } from "@components/icons";
+import Loading from "@components/Loading";
+import RatingCircle, { ColorRating } from "@components/RatingCircle";
+
+// hooks
+import {
+  OptionEntry,
+  ProgressKeyType,
+  useProgressOptions,
+  useQuestProgress,
+} from "@hooks/useProgress";
+import { QTag, useQuestionTags } from "@hooks/useQuestionTags";
+import { SolutionType, useSolutions } from "@hooks/useSolutions";
+import useStorage from "@hooks/useStorage";
+import { Tags, useTags } from "@hooks/useTags";
+import { useZen } from "@hooks/useZen";
 
 import {
   Column,
@@ -8,6 +25,7 @@ import {
   ColumnResizeMode,
   PaginationState,
   Table as TTable,
+  VisibilityState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -15,40 +33,27 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-
-import Table from "react-bootstrap/Table";
-import Container from "react-bootstrap/Container";
-import Button from "react-bootstrap/Button";
-import ButtonGroup from "react-bootstrap/ButtonGroup";
-import Form from "react-bootstrap/Form";
-import FormLabel from "react-bootstrap/FormLabel";
-import Pagination from "react-bootstrap/Pagination";
-import Dropdown from "react-bootstrap/Dropdown";
-import Modal from "react-bootstrap/Modal";
-
-// Custom components
-import RatingCircle, { ColorRating } from "@components/RatingCircle";
-import { FilterIcon, ShareIcon } from "@components/icons";
-
-// hooks
-import { useSolutions } from "@hooks/useSolutions";
-import { useQuestionTags } from "@hooks/useQuestionTags";
-import { useZen } from "@hooks/useZen";
-import { useTags } from "@hooks/useTags";
-import Loading from "@components/Loading";
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  Button,
+  ButtonGroup,
+  Container,
+  Dropdown,
+  Form,
+  FormLabel,
+  Modal,
+  Pagination,
+  Table,
+} from "react-bootstrap";
 
 // Constants and Enums
 const LC_HOST = `https://leetcode.cn`;
 const LC_HOST_EN = `https://leetcode.com`;
-const canUseLocalStorage =
-  typeof Storage !== "undefined" && Boolean(window?.localStorage);
-const LC_RATING_PROGRESS_KEY = (questionID: string) =>
-  `lc-rating-zen-progress-${questionID}`;
 const LC_RATING_ZEN_LAST_USED_FILTER_KEY = `lc-rating-zen-last-used-filter`;
 const LC_RATING_ZEN_SETTINGS_KEY = `lc-rating-zen-settings`;
 
 // Question Data Type
-type ConstQuestion = {
+interface ConstQuestion {
   cont_title: string;
   cont_title_slug: string;
   title: string;
@@ -57,19 +62,24 @@ type ConstQuestion = {
   paid_only: boolean;
   rating: number;
   _hash: number;
-};
+}
 
 // Filter Related
-type Filter = {
+interface Filter {
   label: string;
   fn: (r: ConstQuestion) => boolean;
+}
+const createRatingFilter = (min: number, max?: number) => {
+  return (r: ConstQuestion) => {
+    return max === undefined
+      ? r.rating >= min
+      : r.rating >= min && r.rating < max;
+  };
 };
-const createRatingFilter = (min: number, max?: number) => (r: ConstQuestion) =>
-  max === undefined ? r.rating >= min : r.rating >= min && r.rating < max;
 
 const ALL_FILTER_LABEL = "< ALL >";
 
-const filters: Filter[] = [
+const ratingFilters: Filter[] = [
   { label: "(<=1200)", fn: createRatingFilter(1, 1200) }, // starting from 1 to exclude unrated questions
   { label: "(1200 - 1400)", fn: createRatingFilter(1200, 1400) },
   { label: "(1400 - 1600)", fn: createRatingFilter(1400, 1600) },
@@ -79,58 +89,31 @@ const filters: Filter[] = [
   { label: "(>=2400)", fn: createRatingFilter(2400) },
   { label: ALL_FILTER_LABEL, fn: createRatingFilter(1) },
 ];
-// Progress Related
-type ProgressData = Record<string, string>;
-
-enum Progress {
-  TODO = "TODO",
-  WORKING = "WORKING",
-  TOO_HARD = "TOO_HARD",
-  REVIEW_NEEDED = "REVIEW_NEEDED",
-  AC = "AC",
-}
-
-const progressTranslations = {
-  [Progress.TODO]: "下次一定",
-  [Progress.WORKING]: "攻略中",
-  [Progress.TOO_HARD]: "太难了，不会",
-  [Progress.REVIEW_NEEDED]: "回头复习下",
-  [Progress.AC]: "过了",
-};
-const progressOptionClassNames = {
-  [Progress.TODO]: "zen-option-TODO",
-  [Progress.WORKING]: "zen-option-WORKING",
-  [Progress.TOO_HARD]: "zen-option-TOO_HARD",
-  [Progress.REVIEW_NEEDED]: "zen-option-REVIEW_NEEDED",
-  [Progress.AC]: "zen-option-AC",
-};
 
 // Filter Button Component
-type FilterButtonProps = {
-  filter: Filter;
-  currentFilter: Filter;
-  onFilterChange: (_: Filter) => void;
-};
+interface FilterButtonProps {
+  label: string;
+  variant: string;
+  onFilterChange: (filterKey: string) => void;
+}
+
 const FilterButton = React.memo(
-  ({ filter, currentFilter, onFilterChange }: FilterButtonProps) => (
-    <Button
-      onClick={() => onFilterChange(filter)}
-      variant={filter.label == currentFilter.label ? "primary" : "secondary"}
-    >
-      {filter.label}
+  ({ label, variant, onFilterChange }: FilterButtonProps) => (
+    <Button onClick={() => onFilterChange(label)} variant={variant}>
+      {label}
     </Button>
   )
 );
 
-function buildTagFilterFn(selectedTags: Record<string, boolean>, q: any) {
+function buildTagFilterFn(
+  selectedTags: Record<string, boolean>,
+  q: (id: string) => QTag
+) {
   return Object.keys(selectedTags).length == 0
     ? () => true
     : (v: ConstQuestion) => {
-        const tags = q(v._hash);
-        if (!tags || !tags[0]) {
-          return false;
-        }
-        if (tags[0].length == 0) {
+        const tags = q(v._hash.toString());
+        if (!tags || !tags[0] || tags[0].length == 0) {
           return false;
         }
         for (let i = 0; i < tags[0].length; i++) {
@@ -142,50 +125,69 @@ function buildTagFilterFn(selectedTags: Record<string, boolean>, q: any) {
       };
 }
 
-function buildProgressFilterFn(selectedProgress: string) {
-  if (!selectedProgress) {
-    return () => true;
-  }
-  return (v: ConstQuestion) => {
-    const progress = localStorage.getItem(LC_RATING_PROGRESS_KEY(v.question_id));
-    return progress === selectedProgress;
-  };
+interface FilterSettingsProps {
+  handleClose: () => void;
+  onSettingsSaved: React.Dispatch<
+    React.SetStateAction<SettingsType | undefined>
+  >;
+  optionKeys: ProgressKeyType[];
+  getOption: (key?: ProgressKeyType) => OptionEntry;
+  tags: Tags;
+  lang: "zh" | "en";
+  settings: SettingsType;
 }
 
-type FilterSettingsProps = {
-  show: boolean;
-  handleClose: any;
-  onSettingsSaved: any;
-  tags: any;
-  lang: any;
-  settings: Record<string, any>;
-  queryTags: any;
-};
-
 const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
+  optionKeys,
+  getOption,
   tags,
-  show,
   handleClose,
   onSettingsSaved,
   settings,
   lang,
-  queryTags,
 }: FilterSettingsProps) => {
-  if (!show) return <></>;
+  const [curSetting, setCurSetting] = useState<SettingsType>(settings);
 
-  const [selectedTags, setSelectedTags] = useState<Record<string, any>>(
-    settings ? settings.selectedTags : {}
-  );
-
-  const [selectedProgress, setSelectedProgress] = useState<string>(
-    settings ? settings.selectedProgress : Progress.TODO
-  );
-
-  const onSelectTags = (key: string) => {
-    setSelectedTags({ ...selectedTags, [key]: !!!selectedTags[key] });
+  const onTagsChange = (key: string) => {
+    if (curSetting.selectedTags[key]) {
+      const { [key]: _, ...rest } = curSetting.selectedTags;
+      setCurSetting({ ...curSetting, selectedTags: rest });
+    } else {
+      setCurSetting({
+        ...curSetting,
+        selectedTags: { ...curSetting.selectedTags, [key]: true },
+      });
+    }
   };
 
-  const RenderTags = (tags: any[]) => {
+  const onTagsReset = () => {
+    setCurSetting({ ...curSetting, selectedTags: {} });
+  };
+
+  const onVisibilityChange = (name: string) => {
+    setCurSetting({
+      ...curSetting,
+      columnVisibility: {
+        ...curSetting.columnVisibility,
+        [name]: !curSetting.columnVisibility[name],
+      },
+    });
+  };
+
+  const onProgressChange = (progress: ProgressKeyType) => {
+    setCurSetting({ ...curSetting, selectedProgress: progress });
+  };
+
+  const onCancel = () => {
+    handleClose();
+  };
+
+  const onConfirm = () => {
+    onSettingsSaved(curSetting);
+    handleClose();
+  };
+
+  const RenderTags = (tags: Tags) => {
     if (!tags) return;
     return (
       <div
@@ -194,10 +196,16 @@ const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
       >
         {tags.map((tag) => {
           return (
-            <span onClick={() => onSelectTags(tag[1])} className="p-1">
+            <span
+              onClick={() => onTagsChange(tag[1])}
+              className="p-1"
+              key={tag[1]}
+            >
               <Button
                 size="sm"
-                variant={!!selectedTags[tag[1]] ? "primary" : "secondary"}
+                variant={
+                  curSetting.selectedTags[tag[1]] ? "primary" : "secondary"
+                }
               >
                 {lang === "en" ? tag[1] : tag[2]}
               </Button>
@@ -208,26 +216,13 @@ const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
     );
   };
 
-  const reset = () => {
-    setSelectedTags({});
-    onSettingsSaved({ ...settings, selectedTags: {}, tagFilterFn: () => true });
-  };
-
-  const toggleVisibility = (name: string) => {
-    onSettingsSaved({
-      ...settings,
-      columnVisibility: {
-        ...settings.columnVisibility,
-        [name]: !settings.columnVisibility[name],
-      },
-    });
-  };
   return (
     <>
       <Modal
-        show={show}
+        show={true}
         dialogClassName="zen-filter-dialog"
         onHide={handleClose}
+        size="xl"
       >
         <Modal.Header closeButton>
           <Modal.Title>设置</Modal.Title>
@@ -237,22 +232,22 @@ const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
             列显示
             <Form className="d-flex mt-2 gap-3">
               <Form.Check
-                checked={Boolean(settings.columnVisibility.tags)}
-                onChange={() => toggleVisibility("tags")}
+                checked={Boolean(curSetting.columnVisibility.tags)}
+                onChange={() => onVisibilityChange("tags")}
                 type="switch"
                 label="算法标签"
                 id="toggle-tags"
               />
               <Form.Check
-                checked={Boolean(settings.columnVisibility.en)}
-                onChange={() => toggleVisibility("en")}
+                checked={Boolean(curSetting.columnVisibility.en)}
+                onChange={() => onVisibilityChange("en")}
                 type="switch"
                 label="英文链接"
                 id="toggle-en"
               />
               <Form.Check
-                checked={Boolean(settings.columnVisibility.ratings)}
-                onChange={() => toggleVisibility("ratings")}
+                checked={Boolean(curSetting.columnVisibility.ratings)}
+                onChange={() => onVisibilityChange("ratings")}
                 type="switch"
                 label="难度分"
                 id="toggle-ratings"
@@ -261,53 +256,35 @@ const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
           </h5>
           <hr />
           <h5>
-            标签 <Button onClick={reset}>重置</Button>
+            标签 <Button onClick={onTagsReset}>重置</Button>
           </h5>
           {RenderTags(tags)}
           <hr />
           <h5 className="pt-1 pb-1">进度选择</h5>
-          <Form.Select
-                className={progressOptionClassNames[selectedProgress]}
-                value={selectedProgress}
-                onChange={(e) =>
-                  setSelectedProgress(e.target.value)
-                }
-              >
-                <option value=""></option>
-
-                {[
-                  Progress.WORKING,
-                  Progress.TOO_HARD,
-                  Progress.REVIEW_NEEDED,
-                  Progress.AC,
-                ].map((p) => (
-                  <option
-                    key={p}
-                    value={p}
-                    className={progressOptionClassNames[p] || ""}
-                  >
-                    {progressTranslations[p]}
-                  </option>
-                ))}
-              </Form.Select>
+          <div className="w-25">
+            <Form.Select
+              value={curSetting.selectedProgress}
+              onChange={(e) => {
+                onProgressChange(e.target.value as ProgressKeyType);
+              }}
+              style={{ color: getOption(curSetting.selectedProgress).color }}
+            >
+              <option value="" style={{ color: getOption().color }}>
+                [全部]
+              </option>
+              {optionKeys.map((p) => (
+                <option key={p} value={p} style={{ color: getOption(p).color }}>
+                  {getOption(p).label}
+                </option>
+              ))}
+            </Form.Select>
+          </div>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={handleClose}>
+          <Button variant="secondary" onClick={onCancel}>
             关闭
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              onSettingsSaved({
-                ...settings,
-                selectedTags,
-                selectedProgress,
-                tagFilterFn: buildTagFilterFn(selectedTags, queryTags),
-                progressFilterFn: buildProgressFilterFn(selectedProgress),
-              });
-              handleClose();
-            }}
-          >
+          <Button variant="primary" onClick={onConfirm}>
             应用设置
           </Button>
         </Modal.Footer>
@@ -316,104 +293,102 @@ const FilterSettings: React.FunctionComponent<FilterSettingsProps> = ({
   );
 };
 
+interface SettingsType {
+  columnVisibility: VisibilityState;
+  selectedProgress: ProgressKeyType;
+  selectedTags: Record<string, boolean>;
+}
+
+const defaultSettings: SettingsType = {
+  columnVisibility: { tags: true, ratings: true, en: true },
+  selectedProgress: "",
+  selectedTags: {},
+};
+
 export default function Zenk() {
   // State and hooks
-  const [_, startTransition] = useTransition();
-  const [localStorageProgressData, setLocalStorageProgressData] =
-    useState<ProgressData>({});
+  const { zen: data, isPending: progressLoading } = useZen();
+  const { solutions } = useSolutions();
 
-  const { zen: data, isPending: loading } = useZen(setLocalStorageProgressData);
+  const { tags, isPending: tagsLoading } = useQuestionTags(null);
+  const { tags: qtags } = useTags();
 
-  const [currentFilter, setCurrentFilter] = useState(() => {
-    const lastUsedFilterKey = canUseLocalStorage
-      ? localStorage.getItem(LC_RATING_ZEN_LAST_USED_FILTER_KEY) ||
-        ALL_FILTER_LABEL
-      : ALL_FILTER_LABEL;
+  const [showFilter, setShowFilter] = useState(false);
+
+  const [settings = defaultSettings, setSettings] = useStorage(
+    LC_RATING_ZEN_SETTINGS_KEY,
+    {
+      defaultValue: defaultSettings,
+    }
+  );
+
+  const { allProgress, updateProgress, removeProgress } = useQuestProgress();
+  const { optionKeys, getOption } = useProgressOptions();
+
+  const [currentFilterKey, setCurrentFilterKey] = useStorage(
+    LC_RATING_ZEN_LAST_USED_FILTER_KEY,
+    {
+      defaultValue: ALL_FILTER_LABEL,
+    }
+  );
+
+  const queryTags = (id: string): QTag => {
+    return tags ? tags[id] : [[], []];
+  };
+
+  const curRatingFilter = useMemo(() => {
     return (
-      filters.find((filter) => filter.label === lastUsedFilterKey) ||
-      (filters.find((filter) => filter.label === ALL_FILTER_LABEL) as Filter)
+      ratingFilters.find((filter) => filter.label === currentFilterKey)?.fn ||
+      (() => true)
     );
-  });
+  }, [currentFilterKey]);
+
+  const filteredData = useMemo(() => {
+    const tagsFilter = buildTagFilterFn(settings.selectedTags, queryTags);
+
+    const progressFilter = settings.selectedProgress
+      ? (v: ConstQuestion) => {
+          const progress = getOption(allProgress[v.question_id]);
+          return progress.key === settings.selectedProgress;
+        }
+      : () => true;
+
+    return data
+      .filter(curRatingFilter)
+      .filter(tagsFilter)
+      .filter(progressFilter);
+  }, [data, curRatingFilter, settings]);
 
   // Event handlers
   const handleProgressSelectChange = useCallback(
-    (questionId: string, value: string) => {
-      const newValue = value || Progress.TODO;
-
-      localStorage.setItem(LC_RATING_PROGRESS_KEY(questionId), newValue);
-      setLocalStorageProgressData((prevData) => ({
-        ...prevData,
-        [questionId]: newValue,
-      }));
+    (questID: string, progress: ProgressKeyType) => {
+      if (progress === getOption().key) {
+        removeProgress(questID);
+      } else {
+        updateProgress(questID, progress);
+      }
     },
     []
   );
 
-  const handleFilterChange = useCallback((newFilter: Filter) => {
-    canUseLocalStorage &&
-      localStorage.setItem(LC_RATING_ZEN_LAST_USED_FILTER_KEY, newFilter.label);
-    startTransition(() => {
-      setCurrentFilter(newFilter);
-    });
-  }, []);
-
-  const { solutions } = useSolutions("");
-  const { tags, isPending: tagsLoading } = useQuestionTags(null);
-  const queryTags = (id: any) => {
-    return tags ? tags[id] : [[], []];
-  };
-
-  const { tags: qtags } = useTags();
-  const [showFilter, setShowFilter] = useState(false);
-  const defaultSettings = useMemo<any>(() => {
-    const raw = localStorage.getItem(LC_RATING_ZEN_SETTINGS_KEY);
-    let defaultSettings = {
-      tagFilterFn: () => true,
-      selectedTags: {},
-      progressFilterFn: () => true,
-      selectProgress: {},
-      columnVisibility: { tags: true, ratings: true, en: true },
-    };
-    if (!raw || raw === "") {
-      return defaultSettings;
-    }
-    let settings = null;
-    try {
-      settings = JSON.parse(raw);
-      settings;
-    } catch (err) {}
-    let res = settings || defaultSettings;
-    res["__tag"] = true;
-    res["tagFilterFn"] = buildTagFilterFn(settings.selectedTags, queryTags);
-    return res;
-  }, [tags, qtags]);
-
-  const [settings, setSettings] = useState(defaultSettings);
-
-  const filteredData = useMemo(
-    () =>
-      data
-        .filter(currentFilter.fn)
-        .filter(buildTagFilterFn(settings.selectedTags, queryTags))
-        .filter(buildProgressFilterFn(settings.selectedProgress)),
-    [data, currentFilter, settings]
-  );
-
-
-  if (loading) {
-    return <Loading />
+  if (progressLoading) {
+    return <Loading />;
   }
 
   return (
     <Container fluid="lg" className="zen-container">
       <nav className="nav navbar z-3 zen-nav justify-content-start postion-sticky">
         <ButtonGroup>
-          {filters.map((filter: Filter) => (
+          {ratingFilters.map((filter: Filter) => (
             <FilterButton
               key={filter.label}
-              filter={filter}
-              currentFilter={currentFilter}
-              onFilterChange={handleFilterChange}
+              label={filter.label}
+              variant={
+                filter.label === currentFilterKey ? "primary" : "secondary"
+              }
+              onFilterChange={(filterKey) => {
+                setCurrentFilterKey(filterKey);
+              }}
             />
           ))}
         </ButtonGroup>
@@ -422,34 +397,29 @@ export default function Zenk() {
         </Button>
       </nav>
 
-      <FilterSettings
-        lang={"zh"}
-        tags={qtags}
-        show={showFilter}
-        handleClose={() => setShowFilter(false)}
-        onSettingsSaved={(_settings: any) => {
-          try {
-            localStorage.setItem(
-              LC_RATING_ZEN_SETTINGS_KEY,
-              JSON.stringify(_settings)
-            );
-          } catch (err) {}
-          setSettings(_settings);
-        }}
-        settings={settings}
-        queryTags={queryTags}
-      />
+      {showFilter && (
+        <FilterSettings
+          optionKeys={optionKeys}
+          getOption={getOption}
+          lang={"zh"}
+          tags={qtags}
+          handleClose={() => setShowFilter(false)}
+          onSettingsSaved={setSettings}
+          settings={settings}
+        />
+      )}
       <div style={{ width: "100%" }}>
         <ZenTableComp
-          querySolution={(id: any) => {
+          optionKeys={optionKeys}
+          getOption={getOption}
+          querySolution={(id: string) => {
             return solutions[id];
           }}
           columnVisibility={settings.columnVisibility}
           queryTags={queryTags}
           data={filteredData}
-          progress={(item: any) =>
-            (localStorageProgressData[item.question_id] as Progress) ||
-            Progress.TODO
+          quest2progress={(item: ConstQuestion) =>
+            allProgress[item.question_id]
           }
           handleProgressSelectChange={handleProgressSelectChange}
         />
@@ -458,22 +428,28 @@ export default function Zenk() {
   );
 }
 
+interface ZenTableCompProps {
+  optionKeys: ProgressKeyType[];
+  getOption: (key: ProgressKeyType) => OptionEntry;
+  columnVisibility: VisibilityState;
+  queryTags: (id: string) => QTag;
+  data: ConstQuestion[];
+  querySolution: (id: string) => SolutionType;
+  quest2progress: (v: ConstQuestion) => ProgressKeyType;
+  handleProgressSelectChange: (questID: string, value: ProgressKeyType) => void;
+}
+
 const ZenTableComp = React.memo(
   ({
+    optionKeys,
+    getOption,
     queryTags,
     data,
     columnVisibility,
     querySolution,
-    progress,
+    quest2progress,
     handleProgressSelectChange,
-  }: {
-    columnVisibility: any;
-    queryTags: any;
-    data: any;
-    querySolution: any;
-    progress: (v: ConstQuestion) => Progress;
-    handleProgressSelectChange: any;
-  }) => {
+  }: ZenTableCompProps) => {
     const columns = React.useMemo<ColumnDef<ConstQuestion>[]>(
       () => [
         {
@@ -507,35 +483,43 @@ const ZenTableComp = React.memo(
           },
           cell: (info) => {
             const item = info.row.original;
-            const sol = querySolution(`${item._hash}`);
-            let link = sol
-              ? LC_HOST + "/problems/" + sol[5] + "/solution/" + sol[1]
+            const soln = querySolution(item._hash.toString());
+            let link = soln
+              ? LC_HOST +
+                "/problems/" +
+                soln.questSlug +
+                "/solution/" +
+                soln.solnSlug
               : null;
             return (
-            <div className="d-flex justify-content-between align-items-center">
+              <div className="d-flex justify-content-between align-items-center">
                 {!!item.paid_only && <span>👑</span>}
-                <a
+                <div>
+                  <a
                     href={`${LC_HOST}/problems/${item.title_slug}`}
                     target="_blank"
-                >
+                  >
                     {item.question_id}. {item.title}
-                    {columnVisibility['en'] && <a
-                        href={`${LC_HOST_EN}/problems/${item.title_slug}`}
-                        target="_blank"
-                        className="ms-2"
+                  </a>
+                  {columnVisibility["en"] && (
+                    <a
+                      href={`${LC_HOST_EN}/problems/${item.title_slug}`}
+                      target="_blank"
+                      className="ms-2"
                     >
-                        <ShareIcon height={16} width={16}/>
-                    </a>}                    
-                </a>
-                <div>
-                    {link && (
-                        <span className="zen-ans">
-                            <a href={link}>🎈</a>
-                        </span>
-                    )}
+                      <ShareIcon height={16} width={16} />
+                    </a>
+                  )}
                 </div>
-            </div>            
-              );
+                <div>
+                  {link && (
+                    <span className="zen-ans">
+                      <a href={link}>🎈</a>
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
           },
           enableColumnFilter: false,
           header: () => <span>题号</span>,
@@ -549,7 +533,7 @@ const ZenTableComp = React.memo(
           enableColumnFilter: false,
           cell: (info) => (
             <>
-              <RatingCircle difficulty={Number(info.getValue())} />
+              <RatingCircle rating={Number(info.getValue())} />
               <ColorRating rating={Number(info.getValue())}>
                 {Number(info.getValue()).toFixed(0)}
               </ColorRating>
@@ -558,7 +542,7 @@ const ZenTableComp = React.memo(
         },
         {
           accessorFn: (row) => {
-            let tags = queryTags(row._hash);
+            let tags = queryTags(row._hash.toString());
             return tags ? tags[1] : "-";
           },
           header: "算法标签",
@@ -574,31 +558,37 @@ const ZenTableComp = React.memo(
           enableSorting: false,
           cell: (info) => {
             const item = info.row.original;
+            const curOption = getOption(quest2progress(item));
+
             return (
               <Form.Select
-                className={progressOptionClassNames[progress(item)] || ""}
-                value={progress(item) === Progress.TODO ? "" : progress(item)}
+                value={curOption.key}
                 onChange={(e) =>
-                  handleProgressSelectChange(item.question_id, e.target.value)
+                  handleProgressSelectChange(
+                    item.question_id,
+                    e.target.value as ProgressKeyType
+                  )
                 }
+                style={{ color: curOption.color }}
               >
-                {/* Empty option for TODO */}
-                <option value=""></option>
-
-                {[
-                  Progress.WORKING,
-                  Progress.TOO_HARD,
-                  Progress.REVIEW_NEEDED,
-                  Progress.AC,
-                ].map((p) => (
+                {optionKeys.map((p) => (
                   <option
                     key={p}
                     value={p}
-                    className={progressOptionClassNames[p] || ""}
+                    style={{ color: getOption(p).color }}
                   >
-                    {progressTranslations[p]}
+                    {getOption(p).label}
                   </option>
                 ))}
+                {optionKeys.indexOf(curOption.key) == -1 && (
+                  <option
+                    key={curOption.key}
+                    value={curOption.key}
+                    style={{ color: curOption.color }}
+                  >
+                    {curOption.label}
+                  </option>
+                )}
               </Form.Select>
             );
           },
@@ -630,9 +620,9 @@ const ZenTable = React.memo(
       tags: true,
     },
   }: {
-    data: any;
-    columns: any;
-    columnVisibility?: any;
+    data: ConstQuestion[];
+    columns: ColumnDef<ConstQuestion>[];
+    columnVisibility?: VisibilityState;
   }) => {
     const [pagination, setPagination] = React.useState<PaginationState>({
       pageIndex: 0,
@@ -882,8 +872,8 @@ function Filter({
   column,
   table,
 }: {
-  column: Column<any, any>;
-  table: TTable<any>;
+  column: Column<ConstQuestion, unknown>;
+  table: TTable<ConstQuestion>;
 }) {
   const firstValue = table
     .getPreFilteredRowModel()

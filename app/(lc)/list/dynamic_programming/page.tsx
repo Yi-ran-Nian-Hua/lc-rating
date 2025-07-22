@@ -1,12 +1,10 @@
 "use client";
+
+import data from "@components/containers/List/data/dynamic_programming";
 import { lazy } from "react";
 
-// const List = dynamic(() => import("@components/containers/List/DynamicPrograming"), {
-//   ssr: false,
-// });
-
-const List = lazy(() => import("@components/containers/List/DynamicPrograming"))
+const List = lazy(() => import("@components/containers/List"));
 
 export default function Page() {
-  return <List />;
+  return <List data={data} />;
 }
