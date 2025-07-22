@@ -2,6 +2,12 @@ import { ShareIcon } from "@components/icons";
 import RatingCircle, { ColorRating } from "../RatingCircle";
 import Form from "react-bootstrap/esm/Form";
 import { useCallback, useState } from "react";
+import React from "react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import rehypeRaw from "rehype-raw";
+import "katex/dist/katex.min.css";
 
 const LC_RATING_PROGRESS_KEY = (questionID: string) =>
   `lc-rating-zen-progress-${questionID}`;
@@ -101,8 +107,9 @@ function ProblemCategory({
       {summary && (
         <span
           className="d-inline-block p-2 mb-2 rounded summary bg-secondary-subtle text-warning-emphasis"
-          dangerouslySetInnerHTML={{ __html: summary }}
-        ></span>
+        >
+          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex, rehypeRaw]}>{summary}</ReactMarkdown>
+        </span>
       )}
       <div className={`level-${level + 1}`}>
         {data &&
@@ -181,14 +188,11 @@ function ProblemCategoryList({
 
   return (
     <div className="shadow rounded p-2 leaf">
-      <h3 className="title" id={`${hashCode(data.title || "")}`}>
-        {data.title}
-      </h3>
+      <h3 className="title" id={`${hashCode(data.title || "")}`}>{data.title}</h3>
       {data.summary && (
-        <p
-          className="p-2 rounded summary bg-secondary-subtle text-warning-emphasis"
-          dangerouslySetInnerHTML={{ __html: data.summary }}
-        ></p>
+        <p className="p-2 rounded summary bg-secondary-subtle text-warning-emphasis">
+          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex, rehypeRaw]}>{data.summary}</ReactMarkdown>
+        </p>
       )}
       <ul className={`list p-2 ${data.child && getCols(data.child.length)}`}>
         {data.child &&
